@@ -1,0 +1,811 @@
+---
+title: "Female and Patenting Analysis Report"
+author: "Huiting Wu"
+date: "`r Sys.Date()`"
+output: pdf_document
+classoption: titlepage
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, 
+                      message = FALSE, warning = FALSE, 
+                      fig.width = 6, fig.height = 4, out.width = "100%"  )
+```
+
+```{r, include=FALSE}
+library(pacman)
+p_load(dplyr, readr, stringr, ggplot2, gtsummary, olsrr, tidymodels, feasts, car, corrplot, MASS, lmtest, mice, reshape2, emmeans, nlme, readr, countrycode, knitr, kableExtra, broom)
+```
+
+# Abstract
+
+This report analyzes the relationship between female researcher and patenting.
+
+# Research Questions:
+
+Analyze whether countries with a higher percentage of female researchers, segmented by sector (non-profit, government, business, higher education), demonstrate greater success in intellectual property (IP) creation.
+
+This study examines whether countries with a higher representation in female.
+
+# Introduction
+
+Women are underrepresented in research fields, and understanding the relationship between female representation and patents may help address barriers for females in research. If there’s a connection between more female researchers and more patents, it could highlight the importance of inclusivity in driving technological progress. Moreover, promoting female researchers may help to create a more productive and innovative research environment.
+
+# Key Findings
+
+The relationship between female researchers and patent applications is not straightforward in aggregate from 2017 to 2023. Simply increasing the percentage of female researchers does not always result in more patents.
+
+The strength of this relationship depends on the environment a researcher works in. Without considering specific sectors, only about 1.5% of the variation in patent activity can be linked to the percentage of female researchers in a country. When we consider sectors in it, it increases to about 5%.
+
+Also, the countries with higher percentages of female researchers have stronger positive associations between female researchers and patenting. These suggest that both gender representation and the research environment play a role in patenting.
+
+# About Dataset and Key Variables
+
+-   The first dataset: **percentage of female researchers.csv**:
+
+There are 3589 rows, 4 column, 83 missing values in value, and 1 duplicated data point
+
+"`Indicators`": Different sectors.
+
+Head count of female researchers;
+
+Full time equivalent of female researcher;
+
+Head count of female researchers in Business enterprise, government, higher education, and non-profit;
+
+Full time equivalent of female researchers in Business enterprise, government, higher education, and non-profit
+
+"`Country`": Country or area names. There are 136 areas. There are 86 countries using for this study after data merging.
+
+"`Time`": Year; 2017 to 2023
+
+"`Value`": percentage of female researchers
+
+-   The second dataset: **Total patent applications 2017 to 2023.csv**:
+
+There are 1183 rows, 3 column, and 172 missing values in total patent applications.
+
+"`Origin`": Country names. There are 169 countries.
+
+"`Time`": Year; 2017 to 2023
+
+"`Total Applications`": Total patent applications.
+
+-   The third dataset: **Population.csv**
+
+"`Time`": Year; 2017 to 2023
+
+"`Country`": Country or area names. There are 266 areas.
+
+```{r, include=FALSE}
+### import dataset, choose the interesting variables, and rename
+
+# total population
+population <- read_csv("API_SP.POP.TOTL_DS2_en_csv_v2_76253/API_SP.POP.TOTL_DS2_en_csv_v2_76253.csv", 
+    skip = 3) |> 
+  dplyr::select(`Country Name`, `2017`:`2023`, `Country Code`) |> 
+  pivot_longer(cols = `2017`:`2023`,
+               names_to = "Time",
+               values_to = "Population") |> 
+  rename( Country = `Country Name`) |> 
+  mutate(Country = recode_factor(Country, "Hong Kong SAR, China" = "China, Hong Kong SAR",
+                                 "Macao SAR, China" = "China, Macao SAR"))
+
+# percentage of female researchers dataset
+female_df <- read_csv("percentage of female researchers.csv") |> 
+  dplyr::select(Indicators, Country, Time, Value) |> 
+  mutate(
+    Country = recode_factor(Country, 
+                     "China, Macao Special Administrative Region" = "China, Macao SAR"),
+    Indicators = recode_factor(Indicators,
+                        "Female researchers as a percentage of total researchers (FTE) - Business enterprise" = "Business enterprise",
+                        "Female researchers as a percentage of total researchers (FTE) - Government" = "Government",
+                        "Female researchers as a percentage of total researchers (FTE) - Higher education" = "Higher education",
+                        "Female researchers as a percentage of total researchers (FTE) - Private non-profit" = "Non-profit"),
+    Time = as.factor(Time),
+    Indicators = as.factor(Indicators),
+    Country = as.factor(Country)
+  )
+  
+
+# total patent applications dataset
+patent_df <- read_csv("Total patent applications 2017 to 2023.csv", 
+    col_types = cols(`2023` = col_number()), 
+    locale = locale(), skip = 5) |> 
+  dplyr::select( -Office, -Type) |> 
+  pivot_longer(cols = `2017`:`2023`,
+               names_to = "Time",
+               values_to = "Total Applications") |> 
+  mutate(Origin = recode_factor(Origin,
+                          "Czech Republic" = "Czechia"),
+         Time = as.factor(Time),
+         Origin = as.factor(Origin)) |> 
+  mutate(Country_Code = countrycode(Origin, "country.name", "iso3c"))
+```
+
+```{r, include=FALSE}
+# dimensions
+dim(patent_df)
+dim(female_df)
+dim(population)
+
+# Column Names
+colnames(patent_df)
+colnames(female_df)
+colnames(population)
+
+patent_df |> distinct(Origin) |> count()
+
+female_df |> distinct(Country) |> count()
+
+population |> distinct(Country) |> count()
+
+# Summary Statistics
+patent_df |> 
+  summarise(across(where(is.numeric), 
+                   list(mean = mean, sd = sd, median = median), na.rm = TRUE))
+
+female_df |> 
+  summarise(across(where(is.numeric), 
+                   list(mean = mean, sd = sd, median = median), na.rm = TRUE))
+
+population |> 
+  summarise(across(where(is.numeric), 
+                   list(mean = mean, sd = sd, median = median), na.rm = TRUE))
+
+# Missing Values
+knitr::kable(apply(patent_df, 2, function(x) sum(is.na(x))))
+knitr::kable(apply(female_df, 2, function(x) sum(is.na(x))))
+knitr::kable(apply(population, 2, function(x) sum(is.na(x))))
+
+# Duplicated data
+sum(duplicated(patent_df))
+sum(duplicated(female_df))
+sum(duplicated(population))
+
+female_df |> filter(Indicators == "Researchers (HC) - % Female",
+                    Country == "World")
+
+female_df <- female_df[!duplicated(female_df),]
+
+# Summary
+summary(female_df)
+summary(patent_df)
+summary(population)
+```
+
+```{r, include=FALSE}
+full_time_female <- female_df  |> 
+  filter(Indicators == "Researchers (FTE) - % Female")
+
+# there are only 2 contries do not have FTE female researchers
+setdiff(pull(full_time_female |> distinct(Country)), 
+         pull(patent_df |> distinct(Origin)))
+# "Gambia"  "Myanmar"
+```
+
+```{r, include=FALSE}
+combined_FTE_df <- patent_df |> 
+  full_join(full_time_female, by = c("Origin" = "Country", "Time" = "Time")) |>
+  dplyr::select(-Indicators) |> 
+  full_join(population, by = c("Country_Code" = "Country Code", "Time" = "Time"))
+```
+
+```{r, include=FALSE}
+# remove the countries with no data about percentage of female at all
+combined_FTE_df |> filter(is.na(Country_Code)) |> distinct(Origin)
+
+countries_missing <- combined_FTE_df |> 
+  group_by(Origin) |> 
+  summarise(all_missing = all(is.na(Value))) |> 
+  filter(all_missing) |> 
+  pull(Origin)
+
+combined_FTE_df <- combined_FTE_df |> 
+  filter(!Origin %in% countries_missing) |> 
+  drop_na() |> # remove missing values
+  mutate(applications_per_capita = `Total Applications`/Population)
+# create the percentage of patent applications
+```
+
+```{r, include=FALSE}
+combined_FTE_df |> distinct(Origin) |> count()
+
+colSums(is.na(combined_FTE_df))
+
+# auto generate report for combined dataset
+# DataExplorer::create_report(combined_FTE_df, y = "Log_Total_Applications",
+#                           output_file = "combined_FTE_df_report.html")
+```
+
+```{r, include=FALSE}
+sectors_df <- female_df |> 
+  filter(!str_detect(Indicators, " - ")) |> 
+  mutate(Indicators = as.factor(str_trim(Indicators)))
+```
+
+```{r, include=FALSE}
+combined_sectors_df <- patent_df |> 
+  full_join(sectors_df |> mutate(Time = as.character(Time)),
+             by = c("Origin" = "Country", "Time" = "Time")) |> 
+  full_join(population, by = c("Country_Code" = "Country Code", "Time" = "Time"))
+
+combined_sectors_df |> distinct(Origin) |> count()
+
+table(combined_sectors_df$Indicators, combined_sectors_df$Time)
+```
+
+# Methods
+
+### Data Cleaning
+
+Countries without any data on the percentage of female researchers were removed to ensure completeness in the analysis.
+
+### Data Preparation
+
+Dataset Merging: Three datasets were combined based on country names to create a unified dataset.
+
+New Variable Creation: A new variable, patent applications per capita, was computed by dividing the total patent applications by the country’s population.
+
+Data Transformation: A log transformation was applied to patent applications per capita to normalize the distribution and improve model assumptions.
+
+### Statistical Analysis
+
+ANOVA: Used to compare patent applications per capita across different sectors of female researcher representation. Also, compare the average of female researchers representation in different sectors.
+
+Correlation Test: Measured the strength and direction of the association between female researcher representation and patent applications per capita.
+
+Regression Analysis: Examined the relationship between the percentage of female researchers and patent applications per capita.
+
+ANCOVA: Examined the interaction effect between female researcher representation and research sectors on patent applications per capita.
+
+```{r, include=FALSE}
+# remove the countries with no data about percentage of female at all
+countries_missing <- combined_sectors_df |> 
+  group_by(Origin) |> 
+  summarise(all_missing = all(is.na(Value))) |> 
+  filter(all_missing) |> 
+  pull(Origin)
+
+combined_sectors_df <- combined_sectors_df |> 
+  filter(!Origin %in% countries_missing) |> 
+  drop_na() |> # remove missing values
+  mutate(applications_per_capita = `Total Applications`/Population)
+# create the percentage of patent applications
+
+colSums(is.na(combined_sectors_df))
+
+combined_sectors_df |> distinct(Origin) |> count()
+
+## auto generate report for combined dataset
+# DataExplorer::create_report(combined_sectors_df, y = "Log_Total_Applications", 
+#                            output_file = "combined_sectors_report.html")
+```
+
+```{r, include=FALSE}
+countries <- combined_FTE_df |> group_by(Origin) |> 
+  summarize(mean_percent_female = mean(Value, na.rm = T),
+            median_applications_per_capita = median(applications_per_capita)) |> 
+  arrange(desc(mean_percent_female))
+
+countries <- countries |> pull(Origin) |> head(10)
+```
+
+```{r, include=FALSE}
+countries1 <- combined_FTE_df |> group_by(Origin) |> 
+  summarize(mean_percent_female = mean(Value, na.rm = T),
+            median_applications_per_capita = median(applications_per_capita)) |> 
+  arrange(desc(median_applications_per_capita))
+
+countries1 <- countries1 |> pull(Origin) |> head(10)
+```
+
+# Data Visualization
+
+### Visualize the target variables: Patent applications per capita and percent of female researchers
+
+```{r}
+p1 <- combined_FTE_df |> 
+  ggplot(aes(x = applications_per_capita)) +
+  geom_histogram(fill = "#56B4E9") + 
+  labs(title = "Distribution of Patent Applications Per Capita",
+       y = "Frequency",
+       x = "Patents Application Per Capita") +
+  theme_classic()
+p1
+ggsave("total patents.pdf", plot = p1, width = 8, height = 6)
+```
+
+```{r}
+combined_FTE_df |> 
+  ggplot(aes(x = Value)) + 
+  geom_boxplot(fill = "#56B4E9") + 
+  labs(title = "Distribution of Percentage of Female Researchers
+       (Full Time Equivalent)",
+       y = "Frequency",
+       x = "Percentage Of Female Researchers(%)") +
+  theme_classic()
+```
+
+### Relationship of percentage of female researchers in different sectors with the mean of log patent applications
+
+Looking at different sectors, there are varied trends. In business, an unexpected trend appears—countries with more female researchers tend to have fewer patents. This could be due to industries like tech and engineering having fewer females or barriers that limit their access to funding and leadership.
+
+In the non-profit sector, some countries have a high percentage of female researchers but low patent activity. This suggests their work may focus more on social impact or policy rather than commercial innovation.
+
+For higher education and government, more female researchers tend to be associated with slightly higher patent applications. This suggests their contributions support innovation, but the effect is not very strong.
+
+Overall, having more female researchers alone isn’t enough to boost patent activity. Other factors, like funding, industry focus, and opportunities, play a significant role.
+
+```{r}
+# relationship of Female Researchers and Patent Applications by sectors
+combined_sectors_df |> 
+  group_by(Origin, Indicators) |> 
+  summarize(
+    mean_female_researchers = mean(Value, na.rm = TRUE),
+    mean_patents = mean(log(`Total Applications`), na.rm = TRUE)
+  ) |> 
+  filter(!is.na(mean_female_researchers)) |> 
+ggplot(aes(x = mean_female_researchers, 
+                       y = mean_patents, 
+                       color = Indicators)) +
+  geom_point(cex = 0.8, alpha = 0.5) +
+  ylim(0, 15) + 
+  geom_smooth(method = "lm", se = FALSE) +
+  labs(title = "Female Researchers vs. Patent Applications",
+       x = "Mean Percentage of Female Researchers",
+       y = "Mean Scaled Total Patent Applications") +
+  scale_color_manual(values = c("#E69F00", "#56B4E9", "#009E73", "#D55E00", "#0072B2")) +
+  facet_wrap(~Indicators) +
+  theme_minimal()
+```
+### The Location of Countries for the Study
+
+```{r}
+library(rworldmap)  # For world map data
+library(countrycode)  # To ensure country names match standard codes
+country_list <- full_time_female |> distinct(Country) |> pull(Country)
+
+# Load world map data
+world_map <- map_data("world")
+
+# Ensure country names match those in the dataset
+world_map$region <- countrycode(world_map$region, "country.name", "country.name")
+
+# Create a new column to highlight selected countries
+world_map$highlight <- ifelse(world_map$region %in% country_list, "Selected", "Other")
+ggplot(world_map, aes(x = long, y = lat, group = group, fill = highlight)) +
+  geom_polygon(color = "black") +
+  scale_fill_manual(values = c("Selected" = "orange", "Other" = "gray80")) +
+  theme_minimal() +
+  labs(title = "Countries Included For Study",
+       fill = "Country Type") +
+  theme(legend.position = "bottom")
+```
+
+# Scaling the dataset
+
+Total applications of patent is in counting scale which is extremely right skewed. Therefore, log transformation is applied.
+
+```{r, include=FALSE}
+combined_FTE_df <- combined_FTE_df |> 
+  mutate(Log_Applications_Per_Capita = log(applications_per_capita))
+
+combined_sectors_df <- combined_sectors_df |> 
+  mutate(Log_Applications_Per_Capita = log(applications_per_capita))
+```
+
+```{r}
+# Log total applications
+combined_FTE_df |> 
+  ggplot(aes(x = Log_Applications_Per_Capita)) +
+  geom_histogram(fill = "#56B4E9") + 
+  labs(title = "Distribution of Scaled Patent Applications Per Capita
+       (Full Time Equivalent)",
+       y = "Frequency",
+       x = "Scaled Total Patent Applications Per Capital") +
+  theme_classic()
+# ggsave("log total patents.pdf", plot = p2, width = 8, height = 6)
+```
+
+```{r}
+combined_sectors_df |> 
+  ggplot(aes(x = Log_Applications_Per_Capita)) +
+  geom_histogram(fill = "#56B4E9") + 
+  labs(title = "Distribution of Scaled Applications Per Capita
+       (Full Time Equivalent Across Sectors)",
+       y = "Frequency",
+       x = "Scaled Total Applications") +
+  theme_classic()
+```
+
+# Correlation Coefficient Heat map
+
+These plots shows the linear relationship between female researchers and patent applications.
+
+The first plot includes all countries, there is a weak correlation. This means that the relationship is not simply increasing female researchers would result in more patents. Other factors likely influencing the relationship or there are other kinds of relationship between female researchers and patenting like quadratic.
+
+The second plot includes the top 10 countries with a high percentage of female researchers, there is a stronger positive linear relationship. This suggests that in countries where more females are in research, they may have better support, leading to more patents. Stronger policies, funding, and inclusive environments could be key reasons for this difference.
+
+### Explore the relationship between the percentage of female researchers and patent applications for all countries.
+
+```{r}
+# calculate the mean values group by countries
+cor_df <- combined_sectors_df |> 
+  group_by(Origin) |> 
+  summarize(median_applications = median(Log_Applications_Per_Capita),
+            mean_female_researchers = mean(Value))
+
+# Calculate correlation matrix
+correlation_matrix <- cor(na.omit(cor_df[, c("median_applications", "mean_female_researchers")]))
+
+# Visualize the correlation matrix as a heat map
+correlation_melted <- melt(correlation_matrix)
+cor_plot <- ggplot(correlation_melted, aes(Var1, Var2, fill = value)) +
+  geom_tile() +
+  geom_text(aes(label = round(value, 3)), color = "black", size = 6) +
+  theme_minimal() +
+  scale_fill_gradient2(low = "yellow" , high = "orange", midpoint = 0) +
+  theme(axis.text.x = element_text(angle = 30, hjust = 1)) +
+  labs(title = "Correlation Heatmap: 
+  Median Scaled Applications Per Capita
+  vs 
+  Mean Percentage of Female Researchers
+       (All countries)",
+       x = "Variables", y = "Variables") +
+  theme(axis.title = element_text(size = 8), 
+        plot.title = element_text(hjust = 0.5, size = 10))
+cor_plot
+
+# ggsave("correlation.pdf", plot = cor_plot, width = 8, height = 6)
+```
+
+### Explore the relationship between the percentage of female researchers and patent applications for the top 10 countries with high mean percentage female researchers.
+
+```{r}
+# calculate the mean values group by countries
+cor_df <- combined_FTE_df |> 
+  filter(Origin %in% countries) |> 
+  group_by(Origin) |> 
+  summarize(median_applications = median(Log_Applications_Per_Capita),
+            mean_female_researchers = mean(Value))
+
+# Calculate correlation matrix
+correlation_matrix <- cor(na.omit(cor_df[, c("median_applications", "mean_female_researchers")]))
+
+# Visualize the correlation matrix as a heat map
+correlation_melted <- melt(correlation_matrix)
+cor_plot2 <- ggplot(correlation_melted, aes(Var1, Var2, fill = value)) +
+  geom_tile() +
+  geom_text(aes(label = round(value, 3)), color = "black", size = 6) +
+  theme_minimal() +
+  scale_fill_gradient2(low = "yellow" , high = "orange", midpoint = 0) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 30, hjust = 1)) +
+  labs(title = "Correlation Heatmap: 
+  Median Scaled Applications Per Capita
+  vs 
+  Mean Percentage of Female Researchers
+       (top 10 countries with higher female researchers)",
+       x = "Variables", y = "Variables") +
+  theme(axis.title = element_text(size = 8), 
+        plot.title = element_text(hjust = 0.5, size = 10))
+cor_plot2
+# ggsave("correlation2.pdf", plot = cor_plot2, width = 8, height = 6)
+```
+
+# ANOVA Test:
+
+### In different sectors, is there a difference in mean of scaled patent applications per capita?
+
+$\mu_1 = \mu_2 = \mu_3 = \mu_4$ are the means of scaled patent applications per capita for 4 sectors.
+
+$H_0: \mu_1 = \mu_2 = \mu_3 = \mu_4$ = 0
+
+$H_1: \mu_i \ne \mu_j$ for at least one pair of i,j
+
+```{r}
+# table for ANOVA
+aov_df <-  combined_sectors_df |> 
+  group_by(Origin, Indicators) |> 
+  summarize(mean_applications = mean(Log_Applications_Per_Capita),
+            mean_female_researchers = mean(Value))
+
+# fit the anova model
+anova_model1 <- aov(mean_applications ~ Indicators, data = aov_df)
+
+# result
+anova_summary <- summary(anova_model1)
+
+anova_table <- anova_summary[[1]]
+# Create a data frame for the kable output with more descriptive column names and rounded values
+anova_result <- data.frame(
+  Term = rownames(anova_table),
+  Df = anova_table$Df,
+  `Sum of Squares` = round(anova_table$`Sum Sq`, 3),
+  `Mean Square` = round(anova_table$`Mean Sq`, 3),
+  `F Value` = round(anova_table$`F value`, 3),
+  `Pr(>F)` = format(anova_table$`Pr(>F)`, scientific = TRUE)
+)
+
+# Display the result as a kable table
+kable(anova_result, caption = "ANOVA Test Results(scaled patent applications per capita)", digits = 3)
+
+# check assumptions
+par(mfrow = c(1,2))
+plot(anova_model1, 1:2, main = "Checking Assumptions")
+```
+
+### In different sectors, is there a difference in mean of percentage of female researchers?
+
+$\mu_1 = \mu_2 = \mu_3 = \mu_4$ are the means of percentage of female researchers for 4 sectors.
+
+$H_0: \mu_1 = \mu_2 = \mu_3 = \mu_4$ = 0
+
+$H_1: \mu_i \ne \mu_j$ for at least one pair of i,j
+
+```{r}
+# fit the anova model
+anova_model2 <- aov(mean_female_researchers ~ Indicators, data = aov_df)
+
+# result
+anova_summary <- summary(anova_model2)
+
+# Extract the relevant ANOVA table
+anova_table <- anova_summary[[1]]
+
+# Create a data frame for the kable output with more descriptive column names and rounded values
+anova_result <- data.frame(
+  Term = rownames(anova_table),
+  Df = anova_table$Df,
+  `Sum of Squares` = round(anova_table$`Sum Sq`, 3),
+  `Mean Square` = round(anova_table$`Mean Sq`, 3),
+  `F Value` = round(anova_table$`F value`, 3),
+  `Pr(>F)` = format(anova_table$`Pr(>F)`, scientific = TRUE)
+)
+
+# Display the result as a kable table
+kable(anova_result, caption = "ANOVA Test Results(mean percent of female researchers)", digits = 3)
+# there is difference in mean percentage of female researchers
+
+# check assumptions
+par(mfrow = c(1,2))
+plot(anova_model2, 1:2, main = "Checking Assumptions")
+```
+
+# Correlation Test
+
+```{r}
+model_df <- combined_sectors_df |>
+  group_by(Origin, Indicators) |> 
+  summarize(median_applications = median(Log_Applications_Per_Capita), 
+            mean_female_researchers = mean(Value))
+# correlation test
+cor_test_result <- cor.test(model_df$mean_female_researchers, model_df$median_applications, method = "pearson")
+
+# Create a data frame for the kable output with 3 decimal places
+cor_test_df <- data.frame(
+  Term = c("Method", "Correlation Coefficient", "t Statistic", "P-value", "95% Confidence Interval"),
+  Estimate = c(cor_test_result$method,
+               round(cor_test_result$estimate, 3),
+               round(cor_test_result$statistic, 3),
+               round(cor_test_result$p.value, 3),
+               paste(round(cor_test_result$conf.int[1], 3), "to", round(cor_test_result$conf.int[2], 3)))
+)
+
+# Display the result as a kable table
+kable(cor_test_df, caption = "Correlation Test Results (Pearson's method)")
+```
+
+# Regression Model/ANCOVA
+
+### Simple linear Regression
+
+The graph shows that, in general, countries with more female researchers tend to have more patent applications. The horizontal axis represents the average percentage of female researchers across 4 sectors for each country from 2017 to 2023. The vertical axis represents the portion of patent applications. Each dot represents one country across 4 sectors.
+
+```{r}
+# Check linearity
+p <- model_df |> 
+  ggplot(aes(x = mean_female_researchers, y = median_applications)) + 
+  geom_point() + 
+  geom_smooth(se = F) +
+  labs(x = "Mean Percentage Of Female Researchers",
+       y = "Median Scaled Percentage of Total Applications")
+plot <- ggExtra::ggMarginal(p, type = 'histogram')
+# looks like a curve
+plot
+```
+
+```{r}
+# ggsave("relationship.pdf", plot = plot, width = 8, height = 6)
+
+t1 <- model_df |> filter(mean_female_researchers > 75) |> 
+  rename(
+    Country = Origin,
+    Sectors = Indicators,
+    `Median Scaled Patent Applications Per Capita` = median_applications,
+    `Mean Female Researchers (%)` = mean_female_researchers
+  )
+
+kable(t1, caption = "Countries with More Than 75 Percent of Female Researchers", digits = 2) |>
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"))
+```
+
+```{r}
+model <- lm(median_applications ~ mean_female_researchers, data = model_df)
+
+# Extract model summary as a tidy dataframe
+model_summary <- summary(model)$coefficients |> 
+  as.data.frame() |> 
+  tibble::rownames_to_column(var = "Term")
+
+# Rename columns for clarity
+colnames(model_summary) <- c("Term", "Estimate", "Std. Error", "t value", "p-value")
+
+# Rename terms
+model_summary$Term <- dplyr::recode(model_summary$Term,
+                                    "(Intercept)" = "Intercept",
+                                    "mean_female_researchers" = "Mean Female Researchers")
+
+# Display as a kable table
+kable(model_summary, caption = "Summary of Linear Regression Model", digits = 4)
+
+par(mfrow = c(1,2)) # there are outliers
+plot(model, 1:2, main = "Checking Assumptions") # the residual still looks quadratic
+```
+
+### Polynomial Regression
+
+```{r}
+# Add polynomial term
+model2 <- lm(median_applications ~ mean_female_researchers + I(mean_female_researchers^2), 
+             data = model_df)
+
+# Extract model summary as a tidy dataframe
+model_summary <- summary(model2)$coefficients |> 
+  as.data.frame() |> 
+  tibble::rownames_to_column(var = "Term")
+
+# Rename columns for clarity
+colnames(model_summary) <- c("Term", "Estimate", "Std. Error", "t value", "p-value")
+
+# Rename terms
+model_summary$Term <- dplyr::recode(model_summary$Term,
+                                    "(Intercept)" = "Intercept",
+                                    "mean_female_researchers" = "Mean Female Researchers",
+                                    "I(mean_female_researchers^2)" = "Square of Mean Female Researchers")
+
+# Display as a kable table
+kable(model_summary, caption = "Summary of Polynomial Regression Model", digits = 4)
+
+par(mfrow = c(1,2)) # there are outliers
+plot(model2, 1:2, main = "Checking Assumptions") # the residual still looks quadratic
+```
+
+#### Influential points
+
+```{r}
+# Find points that are BOTH high leverage AND outliers
+leverage <- hatvalues(model)
+high_leverage <- which(leverage > (2 * mean(leverage)))
+
+outliers <- which(abs(rstandard(model)) > 2)
+
+# Extract rows where both high leverage and outliers intersect
+high_leverage_outliers <- model_df[intersect(high_leverage, outliers), ]
+
+# Rename the columns
+high_leverage_outliers_renamed <- high_leverage_outliers |> 
+  rename(
+    Country = Origin,
+    Sector = Indicators,
+    `Median Patent Applications Per Capital` = median_applications,
+    `Mean Female Researchers (%)` = mean_female_researchers
+  )
+
+# Display the result as a kable table
+kable(high_leverage_outliers_renamed, caption = "High Leverage and Outliers in the Polynomial Regression Model")
+```
+
+# Interaction term
+
+```{r}
+model_full <- lm(median_applications ~ mean_female_researchers + I(mean_female_researchers^2) + Indicators + 
+                   mean_female_researchers:Indicators, data = model_df)
+model3 <- lm(median_applications ~ mean_female_researchers + I(mean_female_researchers^2) + Indicators, data = model_df)
+
+anova_result <- anova(model, model2, model3,  model_full)
+
+# Add model names to the ANOVA result
+anova_result$model <- c("Linear Regression Model", "Polynomial Regression Model", "Multiple Regression Model", "Interaction Model")
+
+# Calculate AIC for each model
+model_aics <- c(AIC(model), AIC(model2), AIC(model3), AIC(model_full))
+
+# Add AIC to the result
+anova_result$AIC <- model_aics
+
+# Choose the model with the lowest AIC
+best_model <- which.min(model_aics)
+anova_result$`Selected Model` <- ifelse(1:4 == best_model, "Yes", "No")
+
+# Reorder columns to place the model names and AICs at the beginning
+anova_result <- anova_result %>%
+  dplyr::select(model, AIC, `Selected Model`, everything())
+
+# Display the ANOVA table with model names and selection column as a kable table
+kable(anova_result, caption = "ANOVA Comparison of Models with Model Selection Based on AIC", digits = 4)
+
+par(mfrow = c(1,2))
+plot(model_full, 1:2, main = "Checking Assumptions") 
+```
+
+```{r}
+# Get the summary of the model
+model_summary <- summary(model_full)
+
+# Extract the coefficients and other relevant information
+model_summary_df <- as.data.frame(model_summary$coefficients)
+
+# Rename the columns
+model_summary_df_renamed <- model_summary_df %>%
+  rename(
+    `Estimate` = Estimate,
+    `Standard Error` = `Std. Error`,
+    `t Value` = `t value`,
+    `p Value` = `Pr(>|t|)`
+  )
+
+# Rename the terms (row names) based on the provided terms
+rownames(model_summary_df_renamed) <- c(
+  "(Intercept)", 
+  "Mean Female Researchers", 
+  "Squared Mean Female Researchers", 
+  "Indicators (Government)", 
+  "Indicators (Higher education)", 
+  "Indicators (Non-profit)", 
+  "Mean Female Researchers:Indicators (Government)", 
+  "Mean Female Researchers:Indicators (Higher education)", 
+  "Mean Female Researchers:Indicators (Non-profit)"
+)
+
+# Display the summary with renamed terms and columns as a kable table
+kable(model_summary_df_renamed, caption = "Summary of the Interaction Model", digits = 4)
+```
+
+```{r}
+# Find points that are BOTH high leverage AND outliers
+leverage <- hatvalues(model_full)
+high_leverage <- which(leverage > (2 * mean(leverage)))
+
+outliers <- which(abs(rstandard(model_full)) > 2)
+
+# Extract rows where both high leverage and outliers intersect
+high_leverage_outliers <- model_df[intersect(high_leverage, outliers), ]
+
+# Rename the column labels
+high_leverage_outliers_renamed <- high_leverage_outliers %>%
+  rename(
+    "Country" = Origin, 
+    "Sector" = Indicators, 
+    "Scaled Patent Applications Per Capita(Median)" = median_applications, 
+    "Percentage of Female Researchers" = mean_female_researchers
+  )
+
+# Display the result as a kable table with the renamed column labels
+kable(high_leverage_outliers_renamed, caption = "High Leverage and Outliers in the Interaction Model", digits = 4)
+```
+
+# Summary
+
+The ANOVA test revealed that there is significant variation in the percentage of female researchers across different sectors. Specifically, the business enterprise sector has a lower percentage of female researchers, which correlates with a decreasing trend in patent applications. On the other hand, in the government sector, there is no obvious relationship between the percentage of female researchers and patent applications. The higher education and non-profit sectors showed a positive relationship between female researchers and patent applications, suggesting that higher female representation could contribute to increased innovation in these sectors.
+
+The correlation test comparing the mean percentage of female researchers and the median of scaled patent applications per capital from 2017 to 2023 indicated a slight positive linear relationship. However, this relationship is not uniform across sectors, pointing to the importance of considering sector-specific factors when analyzing the connection between female researchers and patent innovation. Countries with a higher percentage of female researchers exhibited a stronger positive relationship between female researchers and patent applications, further reinforcing the idea that higher female representation may lead to more innovation.
+
+The regression analysis showed that the relationship between female researchers and patent applications is not straightforward. Simply increasing the percentage of female researchers does not always result in more patents. Without considering specific sectors, only about 1.5% of the variability in patent applications is explained by the percentage of female researchers. However, when sectors are included, the explanatory power increases to about 5%, emphasizing the significance of sector-specific factors. The impact is nonlinear, with the effect varying depending on the sector. In this analysis, sectors matter—the relationship between female researchers and patent applications changes depending on the sector. For example, government, higher education, and non-profit sectors show different patterns compared to the business enterprise sector.
+
+Finally, the interaction term in the regression model indicated that the impact of female representation on patent applications depends on the sector. The interaction between mean female researchers and sectors reveals that the influence of female researchers on patent applications is not uniform across all sectors. For instance, the impact is stronger in the higher education and non-profit sectors, while it is weaker in the business enterprise and government sectors. This highlights the importance of sector-specific strategies to encourage female representation and innovation.
+
+# Conclusion
+
+The result shows encouraging female researchers can drive innovation, but the sector is an important factor. Further research is necessary to understand why certain sectors benefit more from female participation. Specialized strategies needed to support females in research to foster innovation and patent success.
